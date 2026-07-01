@@ -280,13 +280,24 @@
             gap: 8px;
         }
 
-        .participant-badge {
+       .participant-badge {
             background: var(--card-bg);
             color: var(--text-main);
             padding: 5px 12px;
             border-radius: 20px;
             font-size: 0.9rem;
             border: 1px solid var(--border);
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.2s;
+        }
+
+        .participant-badge:hover {
+            border-color: var(--primary);
+            background-color: #fff5f5;
+        }
+        body.dark-mode .participant-badge:hover {
+            background-color: #2d1e1e;
         }
 
         .join-form {
@@ -443,7 +454,7 @@
     <script type="module">
         // 1. Import required Firebase SDK modules from web CDN
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
         // 2. PASTE YOUR CONFIGURATION OBJECT COPIED FROM FIREBASE CONSOLE HERE:
        const firebaseConfig = {
@@ -550,16 +561,30 @@
 
         function renderListView() {
             listViewContainer.innerHTML = '';
-            if (races.length === 0) {
-                listViewContainer.innerHTML = '<p style="text-align: center; color: var(--text-light);">No races posted yet. Be the first!</p>';
+            
+            // Generate a local YYYY-MM-DD timestamp for today's filter boundary
+            const now = new Date();
+            const localTodayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+            // Filter out past entries so they vanish from layout stacks seamlessly
+            const upcomingRaces = races.filter(race => race.date >= localTodayStr);
+
+            if (upcomingRaces.length === 0) {
+                listViewContainer.innerHTML = '<p style="text-align: center; color: var(--text-light);">No upcoming races posted yet. Be the first!</p>';
                 return;
             }
 
-            races.sort((a, b) => new Date(a.date) - new Date(b.date));
+            upcomingRaces.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-            races.forEach(race => {
+            upcomingRaces.forEach(race => {
                 const formattedDate = new Date(race.date).toLocaleDateString('en-GB', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' });
-                const participantsHTML = race.participants.map(p => `<span class="participant-badge">👟 ${p}</span>`).join('');
+                
+                // Added click interactions to badges with an 'x' mark to allow deletion paths
+                const participantsHTML = race.participants.map(p => `
+                    <span class="participant-badge" onclick="leaveRace('${race.id}', '${p}')" title="Click to remove from race">
+                        👟 ${p} <span style="color: var(--primary); margin-left: 4px; font-weight: bold;">&times;</span>
+                    </span>
+                `).join('');
                 
                 const closeHtml = race.appCloseDate ? `<div class="race-details">⏳ <strong>Deadlines:</strong> Apps close ${formatDateFriendly(race.appCloseDate)}</div>` : '';
                 const linkHtml = race.raceLink ? `<div class="race-details">🔗 <strong>Website:</strong> <a href="${race.raceLink}" target="_blank">Visit Race Page</a></div>` : '';
@@ -579,12 +604,12 @@
                             <div class="action-links">
                                 <span class="export-action" onclick="exportToPhoneCalendar('${race.id}')">📅 Export to Phone</span><br>
                                 <span class="edit-action" onclick="startEditing('${race.id}')">Edit</span> | 
-                                <span class="delete-action" onclick="deleteRace('${race.id}')">Remove</span>
+                                <span class="delete-action" onclick="deleteRace('${race.id}')">Remove Entirely</span>
                             </div>
                         </div>
                     </div>
                     <div class="participants-section">
-                        <strong>Who's Running? (${race.participants.length})</strong>
+                        <strong>Who's Running? (${race.participants.length})</strong> <span style="font-size: 0.75rem; color: var(--text-light); font-weight: normal; margin-left: 5px;">(Click a name to remove)</span>
                         <ul class="participants-list">${participantsHTML || '<span style="color: var(--text-light); font-size: 0.9rem;">No one has joined yet.</span>'}</ul>
                         <form class="join-form" onsubmit="joinRace(event, '${race.id}')">
                             <input type="text" placeholder="Enter your name to join" required id="joinName-${race.id}">
@@ -731,11 +756,25 @@
                 await updateDoc(raceDocRef, {
                     participants: arrayUnion(runnerName)
                 });
+                inputEl.value = ''; // Resets the input box after adding name
             } catch (error) {
                 console.error("Error joining race profile: ", error);
             }
         }
 
+        // --- NEW FUNCTION TO REMOVE PARTICIPANT ---
+        async function leaveRace(raceId, runnerName) {
+            if (confirm(`Remove "${runnerName}" from this race list?`)) {
+                try {
+                    const raceDocRef = doc(db, "races", raceId);
+                    await updateDoc(raceDocRef, {
+                        participants: arrayRemove(runnerName)
+                    });
+                } catch (error) {
+                    console.error("Error updating array layout: ", error);
+                }
+            }
+        }
         async function deleteRace(raceId) {
             if (editingRaceId === raceId) cancelEditing();
             if (confirm("Are you sure you want to remove this race?")) {
@@ -770,6 +809,9 @@
         window.startEditing = startEditing;
         window.deleteRace = deleteRace;
         window.joinRace = joinRace;
+        window.cancelEditing = cancelEditing;
+        window.joinRace = joinRace;
+        window.leaveRace = leaveRace; // Add this line here
         window.cancelEditing = cancelEditing;
 
         // Startup Boot
